@@ -69,13 +69,13 @@ until one connects successfully. If the connection drops after establishing,
 litewitness exits.
 
     -obscurity
-            enable obscurity mode (disable / and /logz endpoints)
+            enable obscurity mode (disable / and /logz and /metrics endpoints)
 
 Note that the c2sp.org/tlog-witness protocol is not designed to keep the
 supported logs or their tree states secret. Moreover, litewitness has no access
-to any secrets (becuase the private key is in ssh-agent) except arguably the IP
+to any secrets (because the private key is in ssh-agent) except arguably the IP
 addresses of its clients (which are always redacted from /logz). Obscurity mode
-disables the `/` and `/logz` endpoints to make it harder to enumerate the logs
+disables the `/` and `/logz` and `/metrics` endpoints to make it harder to enumerate the logs
 known to the witness.
 
 ## witnessctl

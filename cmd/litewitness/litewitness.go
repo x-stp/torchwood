@@ -26,6 +26,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/net/http2"
@@ -128,11 +131,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	metricsRegistry := prometheus.NewRegistry()
+	metricsRegistry.MustRegister(collectors.NewGoCollector())
+	metricsRegistry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	litewitnessMetrics := prometheus.WrapRegistererWithPrefix("litewitness_", metricsRegistry)
+	witnessMetrics := prometheus.WrapRegistererWithPrefix("witness_", litewitnessMetrics)
+	witnessMetrics.MustRegister(w.Metrics()...)
+
 	mux := http.NewServeMux()
 	mux.Handle("/", w)
 	if !*obscurityFlag {
 		mux.Handle("/logz", console)
 		mux.Handle("/{$}", indexHandler(w))
+		mux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{
+			ErrorLog: slog.NewLogLogger(slog.Default().Handler().WithAttrs(
+				[]slog.Attr{slog.String("source", "metrics")},
+			), slog.LevelWarn),
+		}))
 	}
 
 	srv := &http.Server{

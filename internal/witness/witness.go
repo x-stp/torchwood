@@ -15,6 +15,8 @@ import (
 	"sync"
 
 	"filippo.io/torchwood"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/mod/sumdb/note"
 	"golang.org/x/mod/sumdb/tlog"
 	"zombiezen.com/go/sqlite"
@@ -22,9 +24,10 @@ import (
 )
 
 type Witness struct {
-	s   *torchwood.CosignatureSigner
-	mux *http.ServeMux
-	log *slog.Logger
+	s       *torchwood.CosignatureSigner
+	mux     *http.ServeMux
+	log     *slog.Logger
+	metrics metrics
 
 	dmMu sync.Mutex
 	db   *sqlite.Conn
@@ -74,12 +77,24 @@ func NewWitness(dbPath, name string, key crypto.Signer, log *slog.Logger) (*Witn
 	}
 
 	w := &Witness{
-		db:  db,
-		s:   s,
-		log: log,
-		mux: http.NewServeMux(),
+		db:      db,
+		s:       s,
+		log:     log,
+		metrics: initMetrics(),
+		mux:     http.NewServeMux(),
 	}
-	w.mux.Handle("POST /add-checkpoint", http.HandlerFunc(w.serveAddCheckpoint))
+
+	// Give initial values to metrics that are valid on startup
+	if n, err := w.countKnownLogs(); err == nil {
+		w.metrics.KnownLogs.Set(float64(n))
+	}
+
+	labels := prometheus.Labels{"endpoint": "add-checkpoint"}
+	var addCheckpoint http.Handler = http.HandlerFunc(w.serveAddCheckpoint)
+	addCheckpoint = promhttp.InstrumentHandlerCounter(w.metrics.ReqCount.MustCurryWith(labels), addCheckpoint)
+	addCheckpoint = promhttp.InstrumentHandlerDuration(w.metrics.ReqDuration.MustCurryWith(labels), addCheckpoint)
+	addCheckpoint = promhttp.InstrumentHandlerInFlight(w.metrics.ReqInFlight.With(labels), addCheckpoint)
+	w.mux.Handle("POST /add-checkpoint", addCheckpoint)
 	return w, nil
 }
 
@@ -148,6 +163,14 @@ func (w *Witness) serveAddCheckpoint(rw http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(rw, "%d\n", err.known)
 		return
 	}
+
+	// Metrics sidequest: ensure known logs counter is synced with reality.
+	// (At the moment of writing, there's a dearth of more convenient time to notice this;
+	// when this number changes, it's due to an external poke of the db.)
+	if n, err := w.countKnownLogs(); err == nil {
+		w.metrics.KnownLogs.Set(float64(n))
+	}
+
 	switch err {
 	case errUnknownLog:
 		http.Error(rw, err.Error(), http.StatusNotFound)
@@ -172,12 +195,15 @@ func (w *Witness) serveAddCheckpoint(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Witness) processAddCheckpointRequest(body []byte, bastion string) (cosig []byte, err error) {
+	labels := prometheus.Labels{"error": "", "origin": "", "progress": ""}
 	l := w.log.With("request", string(body))
 	defer func() {
 		if err != nil {
 			l = l.With("error", err)
+			labels["error"] = err.Error()
 		}
 		l.Debug("processed add-checkpoint request")
+		w.metrics.AddCheckpointCount.With(labels).Inc()
 	}()
 	body, noteBytes, ok := bytes.Cut(body, []byte("\n\n"))
 	if !ok {
@@ -212,6 +238,7 @@ func (w *Witness) processAddCheckpointRequest(body []byte, bastion string) (cosi
 		return nil, errBadRequest
 	}
 	l = l.With("origin", origin)
+	labels["origin"] = origin
 	bastions, err := w.getBastions(origin)
 	if err != nil {
 		return nil, err
@@ -237,6 +264,10 @@ func (w *Witness) processAddCheckpointRequest(body []byte, bastion string) (cosi
 		return nil, err
 	}
 	l = l.With("size", c.N)
+	labels["progress"] = "false"
+	if c.N > oldSize {
+		labels["progress"] = "true"
+	}
 	if err := w.checkConsistency(c.Origin, oldSize, c.N, c.Hash, proof); err != nil {
 		return nil, err
 	}
@@ -308,7 +339,20 @@ func (w *Witness) persistTreeHead(origin string, oldSize, newSize int64, newHash
 		}
 		return &conflictError{knownSize}
 	}
+	if err == nil {
+		w.metrics.LogSize.WithLabelValues(origin).Set(float64(newSize))
+	}
 	return err
+}
+
+func (w *Witness) countKnownLogs() (int, error) {
+	var n int
+	err := w.dbExec("SELECT COUNT(*) AS n FROM log",
+		func(stmt *sqlite.Stmt) error {
+			n = int(stmt.GetInt64("n"))
+			return nil
+		})
+	return n, err
 }
 
 func (w *Witness) getLog(origin string) (treeSize int64, treeHash tlog.Hash, err error) {
