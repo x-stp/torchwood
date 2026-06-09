@@ -33,8 +33,6 @@ import (
 	"github.com/transparency-dev/tessera/storage/posix"
 	"golang.org/x/mod/sumdb/note"
 	"golang.org/x/mod/sumdb/tlog"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -231,13 +229,16 @@ func main() {
 	log.Printf("Starting age Keyserver on %s", *listenAddr)
 	log.Printf("Open in browser: http://%s", *listenAddr)
 	log.Println("")
-	h2s := &http2.Server{}
-	handler := h2c.NewHandler(mux, h2s)
-	handler = http.MaxBytesHandler(handler, 1<<16) // 64KB max request size
+	handler := http.MaxBytesHandler(mux, 1<<16) // 64KB max request size
+
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
 
 	server := &http.Server{
-		Addr:    *listenAddr,
-		Handler: handler,
+		Addr:      *listenAddr,
+		Handler:   handler,
+		Protocols: protocols,
 	}
 
 	// Set up signal handling for graceful shutdown
