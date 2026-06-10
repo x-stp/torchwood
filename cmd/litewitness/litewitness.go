@@ -48,6 +48,7 @@ var keyFlag = flag.String("key", "", "SSH fingerprint (with SHA256: prefix) of t
 var bastionFlag = flag.String("bastion", "", "address of the bastion(s) to reverse proxy through, comma separated, the first online one is selected")
 var testCertFlag = flag.Bool("testcert", false, "use rootCA.pem for connections to the bastion")
 var obscurityFlag = flag.Bool("obscurity", false, "enable obscurity mode (disable / and /logz endpoints)")
+var listenMetricsFlag = flag.String("listen-metrics", "", "address to listen for metrics requests, instead of exposing them on the main listener")
 
 type ConnectionSet struct {
 	connections map[string]func() // connection => cancel func
@@ -138,16 +139,35 @@ func main() {
 	witnessMetrics := prometheus.WrapRegistererWithPrefix("witness_", litewitnessMetrics)
 	witnessMetrics.MustRegister(w.Metrics()...)
 
+	metricsHandler := promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler().WithAttrs(
+			[]slog.Attr{slog.String("source", "metrics")},
+		), slog.LevelWarn),
+	})
+
+	var metricsSrv *http.Server
+	if *listenMetricsFlag != "" {
+		metricsSrv = &http.Server{
+			Addr:         *listenMetricsFlag,
+			Handler:      http.MaxBytesHandler(metricsHandler, 10*1024),
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			BaseContext:  func(net.Listener) context.Context { return ctx },
+		}
+		go func() {
+			slog.Info("listening for metrics", "addr", *listenMetricsFlag)
+			metricsSrv.ListenAndServe()
+		}()
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/", w)
 	if !*obscurityFlag {
 		mux.Handle("/logz", console)
 		mux.Handle("/{$}", indexHandler(w))
-		mux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{
-			ErrorLog: slog.NewLogLogger(slog.Default().Handler().WithAttrs(
-				[]slog.Attr{slog.String("source", "metrics")},
-			), slog.LevelWarn),
-		}))
+		if *listenMetricsFlag == "" {
+			mux.Handle("/metrics", metricsHandler)
+		}
 	}
 
 	srv := &http.Server{
@@ -253,6 +273,9 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
+		if metricsSrv != nil {
+			metricsSrv.Shutdown(ctx)
+		}
 	case err := <-e:
 		fatal("server error", "err", err)
 	}
