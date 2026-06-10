@@ -122,6 +122,14 @@ func main() {
 	})
 
 	signer := connectToSSHAgent()
+	bastionCertX509, err := selfSignedCertificate(signer)
+	if err != nil {
+		fatal("generating self-signed certificate", "err", err)
+	}
+	bastionCert := tls.Certificate{
+		Certificate: [][]byte{bastionCertX509},
+		PrivateKey:  signer,
+	}
 
 	w, err := witness.NewWitness(*dbFlag, *nameFlag, signer, slog.Default())
 	if err != nil {
@@ -196,7 +204,7 @@ func main() {
 		retry := 0
 		for {
 			startTime := time.Now()
-			err := connectToBastion(ctx, addr, signer, srv, true)
+			err := connectToBastion(ctx, addr, bastionCert, srv, true)
 			duration := time.Since(startTime)
 			slog.Warn("bastion connection failed", "bastion", addr, "duration", duration, "err", err)
 
@@ -251,7 +259,7 @@ func main() {
 	if *bastionFlag != "" {
 		go func() {
 			for _, bastion := range strings.Split(*bastionFlag, ",") {
-				err := connectToBastion(ctx, bastion, signer, srv, false)
+				err := connectToBastion(ctx, bastion, bastionCert, srv, false)
 				if err == errBastionDisconnected {
 					// Connection succeeded and then was interrupted. Restart to
 					// let the scheduler apply any backoff, and then retry all bastions.
@@ -410,12 +418,8 @@ func indexHandler(w *witness.Witness) http.HandlerFunc {
 
 var errBastionDisconnected = errors.New("connection to bastion interrupted")
 
-func connectToBastion(ctx context.Context, bastion string, signer *signer, srv *http.Server, logSpecific bool) error {
+func connectToBastion(ctx context.Context, bastion string, cert tls.Certificate, srv *http.Server, logSpecific bool) error {
 	slog.Info("connecting to bastion", "bastion", bastion)
-	cert, err := selfSignedCertificate(signer)
-	if err != nil {
-		fatal("generating self-signed certificate", "err", err)
-	}
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var roots *x509.CertPool
@@ -429,14 +433,11 @@ func connectToBastion(ctx context.Context, bastion string, signer *signer, srv *
 	}
 	conn, err := (&tls.Dialer{
 		Config: &tls.Config{
-			Certificates: []tls.Certificate{{
-				Certificate: [][]byte{cert},
-				PrivateKey:  signer,
-			}},
-			MinVersion: tls.VersionTLS13,
-			MaxVersion: tls.VersionTLS13,
-			NextProtos: []string{"bastion/0"},
-			RootCAs:    roots,
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS13,
+			MaxVersion:   tls.VersionTLS13,
+			NextProtos:   []string{"bastion/0"},
+			RootCAs:      roots,
 		},
 	}).DialContext(dialCtx, "tcp", bastion)
 	if err != nil {
@@ -475,7 +476,7 @@ func selfSignedCertificate(key crypto.Signer) ([]byte, error) {
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "litewitness"},
 		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
