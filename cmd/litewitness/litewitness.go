@@ -156,7 +156,10 @@ func main() {
 		}
 		go func() {
 			slog.Info("listening for metrics", "addr", *listenMetricsFlag)
-			metricsSrv.ListenAndServe()
+			err := metricsSrv.ListenAndServe()
+			if err != nil && err != http.ErrServerClosed {
+				slog.Error("metrics server error", "err", err)
+			}
 		}()
 	}
 

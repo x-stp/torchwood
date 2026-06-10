@@ -75,8 +75,16 @@ Note that the c2sp.org/tlog-witness protocol is not designed to keep the
 supported logs or their tree states secret. Moreover, litewitness has no access
 to any secrets (because the private key is in ssh-agent) except arguably the IP
 addresses of its clients (which are always redacted from /logz). Obscurity mode
-disables the `/` and `/logz` and `/metrics` endpoints to make it harder to enumerate the logs
-known to the witness.
+disables the `/` and `/logz` and `/metrics` endpoints to make it harder to
+enumerate the logs known to the witness.
+
+    -listen-metrics string
+            address to listen for metrics requests, separate from main listener
+
+If `-listen-metrics` is used, the `/metrics` endpoint is served on a separate
+listener, regardless of the presence of `-obscurity`. This flag is not
+recommended, public metrics allow ecosystem-wide monitoring and cross-operator
+debugging, and they're used successfully in the CT ecosystem.
 
 ## witnessctl
 
