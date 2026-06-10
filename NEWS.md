@@ -1,3 +1,16 @@
+## Unreleased
+
+### litewitness
+
+- The `-bastion` flag was removed. Configure per-log bastions instead, for
+  example with the new `set-bastions` witnessctl command.
+
+### witnessctl
+
+- Added `set-bastions` command, which adds the given bastion(s) to every log
+  that has none configured (for example after `pull-logs`), or replaces the
+  bastions of every log with `-all`.
+
 ## v0.9.0
 
 ### torchwood

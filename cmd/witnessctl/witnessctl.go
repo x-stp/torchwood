@@ -29,6 +29,7 @@ func usage() {
 	fmt.Println("    del-key -db <path> -origin <origin> -key <verifier key>")
 	fmt.Println("    add-bastion -db <path> -origin <origin> -bastion <address:port>")
 	fmt.Println("    del-bastion -db <path> -origin <origin> -bastion <address:port>")
+	fmt.Println("    set-bastions -db <path> -bastion <address:port>[,<address:port>] [-all]")
 	fmt.Println("    add-sigsum-log -db <path> -key <hex-encoded key>")
 	fmt.Println("    pull-logs -db <path> -source <witness url> [-verbose]")
 	fmt.Println("    list-logs -db <path>")
@@ -82,6 +83,17 @@ func main() {
 		db := openDB(*dbFlag)
 		delBastion(db, *originFlag, *bastionFlag)
 		log.Printf("Deleted bastion %q for log %q.", *bastionFlag, *originFlag)
+
+	case "set-bastions":
+		bastionFlag := fs.String("bastion", "", "comma-separated address:port list")
+		allFlag := fs.Bool("all", false, "replace the bastions of all logs, not just those without any")
+		fs.Parse(os.Args[2:])
+		bastions := strings.Split(*bastionFlag, ",")
+		for _, bastion := range bastions {
+			checkBastion(bastion)
+		}
+		db := openDB(*dbFlag)
+		setBastions(db, bastions, *allFlag)
 
 	case "add-sigsum-log":
 		keyFlag := fs.String("key", "", "hex-encoded key")
@@ -180,6 +192,32 @@ func delBastion(db *sqlite.Conn, origin string, bastion string) {
 	}
 	if db.Changes() == 0 {
 		log.Fatalf("Bastion %q not found.", bastion)
+	}
+}
+
+func setBastions(db *sqlite.Conn, bastions []string, all bool) {
+	query := `SELECT origin FROM log WHERE NOT EXISTS
+		(SELECT 1 FROM bastion WHERE bastion.origin = log.origin)`
+	if all {
+		query = "SELECT origin FROM log"
+	}
+	var origins []string
+	if err := sqlitexExec(db, query, func(stmt *sqlite.Stmt) error {
+		origins = append(origins, stmt.ColumnText(0))
+		return nil
+	}); err != nil {
+		log.Fatalf("Error listing logs: %v", err)
+	}
+	if all {
+		if err := sqlitexExec(db, "DELETE FROM bastion", nil); err != nil {
+			log.Fatalf("Error deleting bastions: %v", err)
+		}
+	}
+	for _, origin := range origins {
+		for _, bastion := range bastions {
+			addBastion(db, origin, bastion)
+			log.Printf("Added bastion %q for log %q.", bastion, origin)
+		}
 	}
 }
 

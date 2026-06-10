@@ -52,21 +52,17 @@ ssh-agent -a litewitness.sock
 SSH_AUTH_SOCK=litewitness.sock ssh-add litewitness.pem
 ```
 
-    -bastion string
-            address of the bastion(s) to reverse proxy through, comma separated, the first online one is selected
     -listen string
             address to listen for HTTP requests (default "localhost:7380")
     -no-listen
             do not open any listening socket, rely exclusively on bastions
 
-Only one of `-bastion` or `-listen` must be specified, or `-no-listen` can be
-used to rely exclusively on per-log bastions configured in the database. The
-`-bastion` flag will cause litewitness to serve requests through a bastion
-reverse proxy (see below). The `-listen` flag will listen for HTTP requests on
-the specified port. (HTTPS needs to be terminated outside of litewitness.) The
-bastion flag is an optionally comma-separated list of bastions to try in order
-until one connects successfully. If the connection drops after establishing,
-litewitness exits.
+The `-listen` flag will listen for HTTP requests on the specified port. (HTTPS
+needs to be terminated outside of litewitness.) Alternatively, `-no-listen` can
+be used to rely exclusively on per-log bastions, which are configured in the
+database with the `add-bastion`, `del-bastion`, and `set-bastions` witnessctl
+commands (see below) and cause litewitness to serve requests through a bastion
+reverse proxy.
 
     -obscurity
             enable obscurity mode (disable / and /logz and /metrics endpoints)
@@ -110,6 +106,15 @@ The `add-bastion` and `del-bastion` commands add and remove bastion addresses
 for a log. Multiple bastions can be configured for a log and will be used
 simultaneously. Bastion configuration is reloaded when litewitness receives a
 SIGHUP signal.
+
+    witnessctl set-bastions -db <path> -bastion <address:port>[,<address:port>] [-all]
+
+The `set-bastions` command adds the given bastion(s) to every log that has none
+configured, for example after `pull-logs` adds new logs. With `-all`, it
+replaces the bastions of every log instead.
+
+Use this if the witness is exposed to the internet only through a global
+bastion, for logs that don't have a per-log bastion endpoint.
 
     witnessctl add-sigsum-log -db <path> -key <hex-encoded key>
 

@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
@@ -45,7 +44,6 @@ var sshAgentFlag = flag.String("ssh-agent", "litewitness.sock", "path to ssh-age
 var listenFlag = flag.String("listen", "localhost:7380", "address to listen for HTTP requests")
 var noListenFlag = flag.Bool("no-listen", false, "do not open any listening socket, rely exclusively on bastions")
 var keyFlag = flag.String("key", "", "SSH fingerprint (with SHA256: prefix) of the witness key")
-var bastionFlag = flag.String("bastion", "", "address of the bastion(s) to reverse proxy through, comma separated, the first online one is selected")
 var testCertFlag = flag.Bool("testcert", false, "use rootCA.pem for connections to the bastion")
 var obscurityFlag = flag.Bool("obscurity", false, "enable obscurity mode (disable / and /logz endpoints)")
 var listenMetricsFlag = flag.String("listen-metrics", "", "address to listen for metrics requests, instead of exposing them on the main listener")
@@ -204,7 +202,7 @@ func main() {
 		retry := 0
 		for {
 			startTime := time.Now()
-			err := connectToBastion(ctx, addr, bastionCert, srv, true)
+			err := connectToBastion(ctx, addr, bastionCert, srv)
 			duration := time.Since(startTime)
 			slog.Warn("bastion connection failed", "bastion", addr, "duration", duration, "err", err)
 
@@ -256,20 +254,7 @@ func main() {
 		bastionSet.Configure(ctx, logBastions)
 	})
 
-	if *bastionFlag != "" {
-		go func() {
-			for _, bastion := range strings.Split(*bastionFlag, ",") {
-				err := connectToBastion(ctx, bastion, bastionCert, srv, false)
-				if err == errBastionDisconnected {
-					// Connection succeeded and then was interrupted. Restart to
-					// let the scheduler apply any backoff, and then retry all bastions.
-					e <- err
-					return
-				}
-			}
-			e <- errors.New("couldn't connect to any bastion")
-		}()
-	} else if !*noListenFlag {
+	if !*noListenFlag {
 		go func() {
 			slog.Info("listening", "addr", *listenFlag)
 			e <- srv.ListenAndServe()
@@ -418,7 +403,7 @@ func indexHandler(w *witness.Witness) http.HandlerFunc {
 
 var errBastionDisconnected = errors.New("connection to bastion interrupted")
 
-func connectToBastion(ctx context.Context, bastion string, cert tls.Certificate, srv *http.Server, logSpecific bool) error {
+func connectToBastion(ctx context.Context, bastion string, cert tls.Certificate, srv *http.Server) error {
 	slog.Info("connecting to bastion", "bastion", bastion)
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -454,9 +439,7 @@ func connectToBastion(ctx context.Context, bastion string, cert tls.Certificate,
 	}(ctx)
 
 	slog.Info("connected to bastion", "bastion", bastion)
-	if logSpecific {
-		ctx = witness.ContextWithBastion(ctx, bastion)
-	}
+	ctx = witness.ContextWithBastion(ctx, bastion)
 	// TODO: find a way to surface the fatal error, especially since with
 	// TLS 1.3 it might be that the bastion rejected the client certificate.
 	(&http2.Server{
