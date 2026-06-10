@@ -204,6 +204,36 @@ HTTP 409
 body == "5\n"
 
 
+# Syntactically invalid note (no signature section).
+POST http://localhost:7380/add-checkpoint
+```
+old 5
+
+sigsum.org/v1/tree/4d6d8825a6bb689d459628312889dfbb0bcd41b5211d9e1ce768b0ff0309e562
+5
+QrtXrQZCCvpIgsSmOsah7HdICzMLLyDfxToMql9WTjY=
+```
+HTTP 400
+[Asserts]
+body contains "invalid input"
+
+
+# Correctly signed note with an invalid checkpoint body.
+POST http://localhost:7380/add-checkpoint
+```
+old 5
+
+sigsum.org/v1/tree/4d6d8825a6bb689d459628312889dfbb0bcd41b5211d9e1ce768b0ff0309e562
+five
+KgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+— sigsum.org/v1/tree/4d6d8825a6bb689d459628312889dfbb0bcd41b5211d9e1ce768b0ff0309e562 UgIom4JTC2MerrFcJ5xDcWHzRPVB6zzGBIw4OFqcKDflqjH4q4xY5vMxUxyczvdIlEwFYf7ivQU4KoWan2bLmzLx0go=
+```
+HTTP 400
+[Asserts]
+body contains "invalid input"
+
+
 -- index.hurl --
 GET http://localhost:7380/
 HTTP 200

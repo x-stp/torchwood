@@ -171,17 +171,17 @@ func (w *Witness) serveAddCheckpoint(rw http.ResponseWriter, r *http.Request) {
 		w.metrics.KnownLogs.Set(float64(n))
 	}
 
-	switch err {
-	case errUnknownLog:
+	switch {
+	case errors.Is(err, errUnknownLog):
 		http.Error(rw, err.Error(), http.StatusNotFound)
 		return
-	case errInvalidSignature, errWrongBastion:
+	case errors.Is(err, errInvalidSignature), errors.Is(err, errWrongBastion):
 		http.Error(rw, err.Error(), http.StatusForbidden)
 		return
-	case errBadRequest:
+	case errors.Is(err, errBadRequest):
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 		return
-	case errProof:
+	case errors.Is(err, errProof):
 		http.Error(rw, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -257,11 +257,11 @@ func (w *Witness) processAddCheckpointRequest(body []byte, bastion string) (cosi
 		return nil, errInvalidSignature
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	c, err := torchwood.ParseCheckpoint(n.Text)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	l = l.With("size", c.N)
 	labels["progress"] = "false"
